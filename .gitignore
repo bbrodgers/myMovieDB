@@ -1,0 +1,28 @@
+# Python dependencies & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+venv/
+.venv/
+
+# Node dependencies & builds
+node_modules/
+dist/
+build/
+.eslintcache
+
+# Databases
+*.db
+*.sqlite
+
+# Environment variables
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# User movie archive files (mounted directory)
+movies/

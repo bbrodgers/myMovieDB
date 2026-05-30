@@ -424,6 +424,18 @@ h1, h2, h3, h4 {
   border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
+.badge.owned-badge {
+  background-color: rgba(139, 92, 246, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+.badge.need-physical {
+  background-color: var(--warning-glow);
+  color: #fde047;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
 /* Top bar quick triggers */
 .top-header {
   display: flex;

@@ -72,9 +72,18 @@ class ImportRequest(BaseModel):
     digital_format: Optional[str] = None
     is_backed_up: bool = True
     backup_location: Optional[str] = None
+    owned: Optional[bool] = True
 
 class SettingUpdate(BaseModel):
     tmdb_api_key: str
+
+class BulkDeleteRequest(BaseModel):
+    ids: List[int]
+
+class BulkUpdateRequest(BaseModel):
+    ids: List[int]
+    owned: Optional[bool] = None
+    is_backed_up: Optional[bool] = None
 
 # Endpoints
 
@@ -94,6 +103,10 @@ def get_movies(
     if owned == "owned":
         query = query.filter(models.Movie.owned == True)
     elif owned == "wishlist":
+        query = query.filter(models.Movie.owned == False, models.Movie.is_digital == False)
+    elif owned == "need_physical":
+        query = query.filter(models.Movie.owned == False, models.Movie.is_digital == True)
+    elif owned == "shopping_list":
         query = query.filter(models.Movie.owned == False)
         
     if format == "physical":
@@ -168,6 +181,27 @@ def delete_movie(movie_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Movie deleted successfully"}
 
+@app.post("/api/movies/bulk-delete")
+def bulk_delete_movies(req: BulkDeleteRequest, db: Session = Depends(get_db)):
+    db.query(models.Movie).filter(models.Movie.id.in_(req.ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"message": f"Successfully deleted {len(req.ids)} movies"}
+
+@app.post("/api/movies/bulk-update")
+def bulk_update_movies(req: BulkUpdateRequest, db: Session = Depends(get_db)):
+    update_data = {}
+    if req.owned is not None:
+        update_data[models.Movie.owned] = req.owned
+    if req.is_backed_up is not None:
+        update_data[models.Movie.is_backed_up] = req.is_backed_up
+        
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+        
+    db.query(models.Movie).filter(models.Movie.id.in_(req.ids)).update(update_data, synchronize_session=False)
+    db.commit()
+    return {"message": f"Successfully updated {len(req.ids)} movies"}
+
 # Directory Scan & Import Endpoints
 
 @app.get("/api/scan")
@@ -223,7 +257,7 @@ def import_scanned_movie(req: ImportRequest, db: Session = Depends(get_db)):
         rating=rating,
         runtime=runtime,
         genres=genres,
-        owned=True,
+        owned=req.owned if req.owned is not None else True,
         is_physical=req.is_physical,
         physical_format=req.physical_format,
         is_digital=req.is_digital,
@@ -286,7 +320,8 @@ def get_stats(db: Session = Depends(get_db)):
     physical = db.query(models.Movie).filter(models.Movie.is_physical == True).count()
     digital = db.query(models.Movie).filter(models.Movie.is_digital == True).count()
     backed_up = db.query(models.Movie).filter(models.Movie.is_backed_up == True, models.Movie.owned == True).count()
-    wishlist = db.query(models.Movie).filter(models.Movie.owned == False).count()
+    wishlist = db.query(models.Movie).filter(models.Movie.owned == False, models.Movie.is_digital == False).count()
+    need_physical = db.query(models.Movie).filter(models.Movie.owned == False, models.Movie.is_digital == True).count()
     owned_count = db.query(models.Movie).filter(models.Movie.owned == True).count()
     
     backup_percentage = 0
@@ -300,5 +335,6 @@ def get_stats(db: Session = Depends(get_db)):
         "digital_count": digital,
         "backed_up_count": backed_up,
         "wishlist_count": wishlist,
+        "need_physical_count": need_physical,
         "backup_percentage": backup_percentage
     }

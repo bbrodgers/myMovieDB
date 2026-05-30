@@ -17,7 +17,10 @@ import {
   HelpCircle,
   ExternalLink,
   ChevronRight,
-  Loader2
+  Loader2,
+  LayoutGrid,
+  List,
+  Table as TableIcon
 } from 'lucide-react';
 
 const API_BASE = window.location.port === '3000' || window.location.port === '5173'
@@ -35,6 +38,7 @@ export default function App() {
     digital_count: 0,
     backed_up_count: 0,
     wishlist_count: 0,
+    need_physical_count: 0,
     backup_percentage: 0
   });
 
@@ -59,6 +63,11 @@ export default function App() {
   const [scanMessage, setScanMessage] = useState('');
   const [batchLocation, setBatchLocation] = useState('NAS-1');
   const [batchPhysicalFormat, setBatchPhysicalFormat] = useState('None');
+  const [batchImportState, setBatchImportState] = useState('backed_up_owned');
+
+  // Library View & Selection State
+  const [viewMode, setViewMode] = useState('grid'); // 'grid', 'compact', 'table'
+  const [selectedMovieIds, setSelectedMovieIds] = useState([]);
 
   // Fetch movies and stats
   const fetchMovies = async () => {
@@ -133,6 +142,181 @@ export default function App() {
     } catch (err) {
       console.error('Error deleting movie:', err);
     }
+  };
+
+  // Bulk Actions
+  const toggleMovieSelection = (movieId) => {
+    setSelectedMovieIds(prev => {
+      if (prev.includes(movieId)) {
+        return prev.filter(id => id !== movieId);
+      } else {
+        return [...prev, movieId];
+      }
+    });
+  };
+
+  const toggleGroupSelection = (groupMovies) => {
+    const groupIds = groupMovies.map(m => m.id);
+    const allSelected = groupIds.every(id => selectedMovieIds.includes(id));
+    setSelectedMovieIds(prev => {
+      if (allSelected) {
+        return prev.filter(id => !groupIds.includes(id));
+      } else {
+        const union = new Set([...prev, ...groupIds]);
+        return Array.from(union);
+      }
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const visibleIds = movies.map(m => m.id);
+    const allSelected = visibleIds.every(id => selectedMovieIds.includes(id));
+    if (allSelected) {
+      setSelectedMovieIds(prev => prev.filter(id => !visibleIds.includes(id)));
+    } else {
+      setSelectedMovieIds(prev => {
+        const union = new Set([...prev, ...visibleIds]);
+        return Array.from(union);
+      });
+    }
+  };
+
+  const handleBulkUpdate = async (updateData) => {
+    if (selectedMovieIds.length === 0) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/movies/bulk-update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: selectedMovieIds,
+          ...updateData
+        })
+      });
+      if (res.ok) {
+        setSelectedMovieIds([]);
+        fetchMovies();
+        fetchStats();
+      } else {
+        const errData = await res.json();
+        alert(`Error performing bulk update: ${errData.detail}`);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedMovieIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to delete the ${selectedMovieIds.length} selected movies?`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/movies/bulk-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: selectedMovieIds
+        })
+      });
+      if (res.ok) {
+        setSelectedMovieIds([]);
+        fetchMovies();
+        fetchStats();
+      } else {
+        const errData = await res.json();
+        alert(`Error performing bulk delete: ${errData.detail}`);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Scanned item individual modification helper
+  const updateFileItem = (index, field, value) => {
+    setScannedFiles(prev => prev.map((item, idx) => {
+      if (idx === index) {
+        return { ...item, [field]: value };
+      }
+      return item;
+    }));
+  };
+
+  // Batch property handlers
+  const handleBatchImportStateChange = (val) => {
+    setBatchImportState(val);
+    setScannedFiles(prev => prev.map(f => ({ ...f, import_state: val })));
+  };
+
+  const handleBatchPhysicalFormatChange = (val) => {
+    setBatchPhysicalFormat(val);
+    setScannedFiles(prev => prev.map(f => ({ ...f, physical_format: val })));
+  };
+
+  const handleBatchLocationChange = (val) => {
+    setBatchLocation(val);
+    setScannedFiles(prev => prev.map(f => ({ ...f, backup_location: val })));
+  };
+
+  const getGroupedMovies = (moviesList) => {
+    const groups = {};
+    moviesList.forEach(movie => {
+      const key = movie.tmdb_id ? `tmdb_${movie.tmdb_id}` : `title_${movie.title.toLowerCase()}`;
+      if (!groups[key]) {
+        groups[key] = {
+          key: key,
+          tmdb_id: movie.tmdb_id,
+          title: movie.title,
+          release_year: movie.release_year,
+          description: movie.description,
+          poster_url: movie.poster_url,
+          rating: movie.rating,
+          runtime: movie.runtime,
+          genres: movie.genres,
+          owned: false,
+          is_physical: false,
+          is_digital: false,
+          is_backed_up: false,
+          movies: []
+        };
+      }
+      const g = groups[key];
+      g.movies.push(movie);
+      
+      if (movie.owned) g.owned = true;
+      if (movie.is_physical) g.is_physical = true;
+      if (movie.is_digital) g.is_digital = true;
+      if (movie.owned && movie.is_backed_up) g.is_backed_up = true;
+      
+      if (!g.poster_url && movie.poster_url) g.poster_url = movie.poster_url;
+      if (!g.description && movie.description) g.description = movie.description;
+      if (!g.rating && movie.rating) g.rating = movie.rating;
+      if (!g.genres && movie.genres) g.genres = movie.genres;
+    });
+    return Object.values(groups);
+  };
+
+  const getFormatLabel = (m) => {
+    if (m.is_physical) {
+      return m.physical_format || 'Physical';
+    }
+    if (m.is_digital) {
+      let label = m.digital_format || 'Digital';
+      if (m.backup_path) {
+        const filename = m.backup_path.split('/').pop().toLowerCase();
+        const tags = [];
+        if (filename.includes('4k') || filename.includes('2160p')) tags.push('4K');
+        else if (filename.includes('1080p')) tags.push('1080p');
+        else if (filename.includes('720p')) tags.push('720p');
+        
+        if (filename.includes('extended')) tags.push('Extended');
+        if (filename.includes('director')) tags.push("Director's Cut");
+        if (filename.includes('remux')) tags.push('Remux');
+        
+        if (tags.length > 0) {
+          label += ` (${tags.join(', ')})`;
+        }
+      }
+      return label;
+    }
+    return '';
   };
 
   // Add Movie / TMDB search subcomponent state
@@ -293,7 +477,13 @@ export default function App() {
         if (data.error) {
           setScanMessage(data.error);
         } else {
-          setScannedFiles(data.results);
+          const filesWithDefaults = data.results.map(file => ({
+            ...file,
+            import_state: batchImportState,
+            physical_format: batchPhysicalFormat,
+            backup_location: batchLocation
+          }));
+          setScannedFiles(filesWithDefaults);
           setScanMessage(`Scanning completed. Found ${data.results.length} movie files.`);
         }
       } else {
@@ -314,19 +504,43 @@ export default function App() {
       return;
     }
 
+    const itemImportState = scannedItem.import_state || batchImportState;
+    const itemPhysicalFormat = scannedItem.physical_format || batchPhysicalFormat;
+    const itemLocation = scannedItem.backup_location || batchLocation;
+
+    const isPhysical = itemPhysicalFormat !== 'None';
+    
+    let owned = true;
+    let isBackedUp = true;
+    let isDigital = true;
+
+    if (itemImportState === 'backed_up_wishlist') {
+      owned = false;
+      isBackedUp = true;
+      isDigital = true;
+    } else if (itemImportState === 'backed_up_owned') {
+      owned = true;
+      isBackedUp = true;
+      isDigital = true;
+    } else if (itemImportState === 'owned_not_backed_up') {
+      owned = true;
+      isBackedUp = false;
+      isDigital = true;
+    }
+
     try {
-      const isPhysical = batchPhysicalFormat !== 'None';
       const payload = {
         file_path: scannedItem.file_path,
         title: match.title,
         release_year: match.release_year ? parseInt(match.release_year) : null,
         tmdb_id: match.tmdb_id,
         is_physical: isPhysical,
-        physical_format: isPhysical ? batchPhysicalFormat : null,
-        is_digital: true,
-        digital_format: scannedItem.extension,
-        is_backed_up: true,
-        backup_location: batchLocation
+        physical_format: isPhysical ? itemPhysicalFormat : null,
+        is_digital: isDigital,
+        digital_format: isDigital ? scannedItem.extension : null,
+        is_backed_up: isBackedUp,
+        backup_location: isBackedUp ? itemLocation : null,
+        owned: owned
       };
 
       const res = await fetch(`${API_BASE}/api/scan/import`, {
@@ -445,7 +659,7 @@ export default function App() {
               onClick={() => handleTabChange('library')}
             >
               <Database size={20} />
-              Library Grid
+              Library
             </li>
             <li 
               className={`nav-item ${activeTab === 'scan' ? 'active' : ''}`}
@@ -503,6 +717,16 @@ export default function App() {
                 <span className="stat-val">{stats.digital_count}</span>
                 <span className="text-muted" style={{ fontSize: '0.8rem' }}>MKV, MP4 backups</span>
               </div>
+              <div className="stat-card">
+                <span className="stat-title">Need Physical</span>
+                <span className="stat-val" style={{ color: '#fde047' }}>{stats.need_physical_count}</span>
+                <span className="text-muted" style={{ fontSize: '0.8rem' }}>Downloaded but not owned</span>
+              </div>
+              <div className="stat-card">
+                <span className="stat-title">Wishlisted</span>
+                <span className="stat-val" style={{ color: '#fca5a5' }}>{stats.wishlist_count}</span>
+                <span className="text-muted" style={{ fontSize: '0.8rem' }}>Not owned or downloaded</span>
+              </div>
               <div className="stat-card backup">
                 <span className="stat-title">Backup Health</span>
                 <span className="stat-val">{stats.backup_percentage}%</span>
@@ -525,7 +749,7 @@ export default function App() {
                 />
               </div>
 
-              <div className="filters-group">
+              <div className="filters-group" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <select 
                   className="filter-select" 
                   value={ownedFilter} 
@@ -534,6 +758,8 @@ export default function App() {
                   <option value="all">Status: All Types</option>
                   <option value="owned">Owned Collection</option>
                   <option value="wishlist">Wishlist</option>
+                  <option value="need_physical">Need Physical</option>
+                  <option value="shopping_list">Shopping List</option>
                 </select>
 
                 <select 
@@ -556,10 +782,137 @@ export default function App() {
                   <option value="backed_up">Fully Backed Up</option>
                   <option value="pending_backup">Pending Backup</option>
                 </select>
+
+                {/* View togglers */}
+                <div style={{ 
+                  display: 'flex', 
+                  gap: '0.25rem', 
+                  border: '1px solid var(--border-color)', 
+                  borderRadius: 'var(--radius-md)', 
+                  padding: '0.25rem', 
+                  background: 'var(--bg-primary)' 
+                }}>
+                  <button 
+                    className={`btn-icon ${viewMode === 'grid' ? 'active' : ''}`}
+                    onClick={() => setViewMode('grid')}
+                    style={{ 
+                      background: viewMode === 'grid' ? 'var(--accent)' : 'transparent', 
+                      border: 'none', 
+                      color: '#fff', 
+                      padding: '0.4rem', 
+                      borderRadius: '4px', 
+                      cursor: 'pointer', 
+                      display: 'flex', 
+                      alignItems: 'center' 
+                    }}
+                    title="Grid View"
+                  >
+                    <LayoutGrid size={16} />
+                  </button>
+                  <button 
+                    className={`btn-icon ${viewMode === 'compact' ? 'active' : ''}`}
+                    onClick={() => setViewMode('compact')}
+                    style={{ 
+                      background: viewMode === 'compact' ? 'var(--accent)' : 'transparent', 
+                      border: 'none', 
+                      color: '#fff', 
+                      padding: '0.4rem', 
+                      borderRadius: '4px', 
+                      cursor: 'pointer', 
+                      display: 'flex', 
+                      alignItems: 'center' 
+                    }}
+                    title="Compact List View"
+                  >
+                    <List size={16} />
+                  </button>
+                  <button 
+                    className={`btn-icon ${viewMode === 'table' ? 'active' : ''}`}
+                    onClick={() => setViewMode('table')}
+                    style={{ 
+                      background: viewMode === 'table' ? 'var(--accent)' : 'transparent', 
+                      border: 'none', 
+                      color: '#fff', 
+                      padding: '0.4rem', 
+                      borderRadius: '4px', 
+                      cursor: 'pointer', 
+                      display: 'flex', 
+                      alignItems: 'center' 
+                    }}
+                    title="Table View"
+                  >
+                    <TableIcon size={16} />
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* Movie Grid */}
+            {/* Bulk Actions Bar */}
+            {selectedMovieIds.length > 0 && (
+              <div className="bulk-actions-bar" style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '1rem 1.5rem',
+                backgroundColor: 'var(--accent-glow)',
+                border: '1px solid var(--accent)',
+                borderRadius: 'var(--radius-md)',
+                marginBottom: '1.5rem'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {selectedMovieIds.length} movie{selectedMovieIds.length > 1 ? 's' : ''} selected
+                  </span>
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                    onClick={() => setSelectedMovieIds([])}
+                  >
+                    Deselect All
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button 
+                    className="btn btn-primary" 
+                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', background: 'rgba(59, 130, 246, 0.6)', borderColor: 'rgba(59, 130, 246, 0.8)' }}
+                    onClick={() => handleBulkUpdate({ owned: true })}
+                  >
+                    Mark as Owned
+                  </button>
+                  <button 
+                    className="btn btn-primary" 
+                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', background: 'rgba(239, 68, 68, 0.6)', borderColor: 'rgba(239, 68, 68, 0.8)' }}
+                    onClick={() => handleBulkUpdate({ owned: false })}
+                  >
+                    Mark as Wishlist
+                  </button>
+                  <button 
+                    className="btn btn-primary" 
+                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', background: 'rgba(16, 185, 129, 0.6)', borderColor: 'rgba(16, 185, 129, 0.8)' }}
+                    onClick={() => handleBulkUpdate({ is_backed_up: true })}
+                  >
+                    Mark as Backed Up
+                  </button>
+                  <button 
+                    className="btn btn-primary" 
+                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', background: 'rgba(245, 158, 11, 0.6)', borderColor: 'rgba(245, 158, 11, 0.8)' }}
+                    onClick={() => handleBulkUpdate({ is_backed_up: false })}
+                  >
+                    Mark as Pending
+                  </button>
+                  <button 
+                    className="btn btn-primary" 
+                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', background: 'var(--danger)', borderColor: 'var(--danger)' }}
+                    onClick={handleBulkDelete}
+                  >
+                    <Trash2 size={14} /> Delete Selected
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Movie List Views */}
             {movies.length === 0 ? (
               <div className="empty-state">
                 <HelpCircle size={48} className="text-muted" />
@@ -570,59 +923,340 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <div className="movie-grid">
-                {movies.map((movie) => (
-                  <div 
-                    key={movie.id} 
-                    className="movie-card"
-                    onClick={() => setSelectedMovie(movie)}
-                  >
-                    <img 
-                      src={movie.poster_url || "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&q=80"} 
-                      alt={movie.title} 
-                      className="movie-poster"
-                      onError={(e) => {
-                        e.target.src = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&q=80";
-                      }}
-                    />
-                    
-                    {/* Glowing Badges in top-left */}
-                    <div style={{ position: 'absolute', top: '0.75rem', left: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.3rem', zIndex: 2 }}>
-                      {movie.owned ? (
-                        movie.is_backed_up ? (
-                          <span className="badge backed-up" title={`Backed up at: ${movie.backup_location || 'unknown'}`}>
-                            <CheckCircle2 size={10} /> Backed Up
-                          </span>
-                        ) : (
-                          <span className="badge pending">
-                            <AlertTriangle size={10} /> Pending Backup
-                          </span>
-                        )
-                      ) : (
-                        <span className="badge wishlist-badge">Wishlist</span>
-                      )}
-                    </div>
+              <div>
+                {/* 1. Grid View */}
+                {viewMode === 'grid' && (
+                  <div className="movie-grid">
+                    {getGroupedMovies(movies).map((group) => {
+                      const isSelected = group.movies.every(m => selectedMovieIds.includes(m.id));
+                      const isPartiallySelected = !isSelected && group.movies.some(m => selectedMovieIds.includes(m.id));
+                      
+                      return (
+                        <div 
+                          key={group.key} 
+                          className={`movie-card ${isSelected ? 'selected' : ''}`}
+                          onClick={() => setSelectedMovie(group)}
+                          style={{
+                            border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border-color)',
+                            position: 'relative'
+                          }}
+                        >
+                          <img 
+                            src={group.poster_url || "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&q=80"} 
+                            alt={group.title} 
+                            className="movie-poster"
+                            onError={(e) => {
+                              e.target.src = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&q=80";
+                            }}
+                          />
+                          
+                          {/* Checkbox overlay in top-right */}
+                          <div 
+                            style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', zIndex: 10 }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input 
+                              type="checkbox" 
+                              checked={isSelected}
+                              ref={el => {
+                                if (el) el.indeterminate = isPartiallySelected;
+                              }}
+                              onChange={() => toggleGroupSelection(group.movies)}
+                              style={{
+                                width: '20px',
+                                height: '20px',
+                                cursor: 'pointer',
+                                accentColor: 'var(--accent)'
+                              }}
+                            />
+                          </div>
 
-                    {/* Movie info overlay on hover */}
-                    <div className="movie-overlay">
-                      <h4 className="movie-card-title">{movie.title}</h4>
-                      <div className="movie-card-year">{movie.release_year || 'Unknown Year'}</div>
-                      {movie.rating > 0 && (
-                        <div className="movie-card-rating">
-                          ★ {movie.rating.toFixed(1)}
+                          {/* Glowing Badges in top-left */}
+                          <div style={{ position: 'absolute', top: '0.75rem', left: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.3rem', zIndex: 2 }}>
+                            {group.owned ? (
+                              <>
+                                <span className="badge owned-badge">Owned</span>
+                                {group.is_backed_up ? (
+                                  <span className="badge backed-up" title="Backed up to NAS">
+                                    <CheckCircle2 size={10} /> Backed Up
+                                  </span>
+                                ) : (
+                                  <span className="badge pending">
+                                    <AlertTriangle size={10} /> Pending Backup
+                                  </span>
+                                )}
+                                {group.is_digital && !group.is_backed_up && (
+                                  <span className="badge digital">
+                                    <HardDrive size={10} /> Downloaded
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              group.is_digital ? (
+                                <span className="badge need-physical">
+                                  <AlertTriangle size={10} /> Need Physical
+                                </span>
+                              ) : (
+                                <span className="badge wishlist-badge">Wishlisted</span>
+                              )
+                            )}
+                          </div>
+
+                          {/* Movie info overlay on hover */}
+                          <div className="movie-overlay">
+                            <h4 className="movie-card-title">{group.title}</h4>
+                            <div className="movie-card-year">{group.release_year || 'Unknown Year'}</div>
+                            {group.rating > 0 && (
+                              <div className="movie-card-rating">
+                                ★ {group.rating.toFixed(1)}
+                              </div>
+                            )}
+                            <div className="badge-group" style={{ marginTop: '0.5rem' }}>
+                              {group.movies.map((m) => {
+                                const lbl = getFormatLabel(m);
+                                if (!lbl) return null;
+                                return (
+                                  <span 
+                                    key={m.id} 
+                                    className={`badge ${m.is_physical ? 'physical' : 'digital'}`}
+                                    style={{ fontSize: '0.65rem' }}
+                                  >
+                                    {lbl}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                      <div className="badge-group">
-                        {movie.is_physical && (
-                          <span className="badge physical">{movie.physical_format}</span>
-                        )}
-                        {movie.is_digital && (
-                          <span className="badge digital">{movie.digital_format || 'Digital'}</span>
-                        )}
-                      </div>
-                    </div>
+                      );
+                    })}
                   </div>
-                ))}
+                )}
+
+                {/* 2. Compact List View */}
+                {viewMode === 'compact' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    {getGroupedMovies(movies).map((group) => {
+                      const isSelected = group.movies.every(m => selectedMovieIds.includes(m.id));
+                      const isPartiallySelected = !isSelected && group.movies.some(m => selectedMovieIds.includes(m.id));
+                      
+                      return (
+                        <div 
+                          key={group.key}
+                          className={`movie-compact-row ${isSelected ? 'selected' : ''}`}
+                          onClick={() => setSelectedMovie(group)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '1.5rem',
+                            padding: '1rem',
+                            background: 'var(--bg-secondary)',
+                            border: isSelected ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            transition: 'var(--transition)'
+                          }}
+                        >
+                          {/* Checkbox */}
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <input 
+                              type="checkbox"
+                              checked={isSelected}
+                              ref={el => {
+                                if (el) el.indeterminate = isPartiallySelected;
+                              }}
+                              onChange={() => toggleGroupSelection(group.movies)}
+                              style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: 'var(--accent)' }}
+                            />
+                          </div>
+
+                          {/* Small poster */}
+                          <img 
+                            src={group.poster_url || "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=100&q=80"}
+                            alt={group.title}
+                            style={{ width: '50px', height: '75px', objectFit: 'cover', borderRadius: '4px' }}
+                            onError={(e) => {
+                              e.target.src = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=100&q=80";
+                            }}
+                          />
+
+                          {/* Movie details */}
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                              <h3 style={{ fontSize: '1.2rem', margin: 0 }}>{group.title}</h3>
+                              <span className="text-muted" style={{ fontSize: '0.9rem' }}>({group.release_year || 'Unknown Year'})</span>
+                              {group.rating > 0 && (
+                                <span style={{ color: 'var(--warning)', fontWeight: 600, fontSize: '0.9rem' }}>★ {group.rating.toFixed(1)}</span>
+                              )}
+                            </div>
+                            <p className="text-muted" style={{ fontSize: '0.9rem', margin: '0.25rem 0 0.5rem 0', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                              {group.description || 'No description available.'}
+                            </p>
+                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.8rem' }}>
+                              {group.genres && group.genres.split(',').map((g, i) => (
+                                <span key={i} style={{ background: 'var(--bg-primary)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>{g.trim()}</span>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Badges for status */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'flex-start' }}>
+                            {group.owned ? (
+                              <>
+                                <span className="badge owned-badge">Owned</span>
+                                {group.is_backed_up ? (
+                                  <span className="badge backed-up"><CheckCircle2 size={10} /> Backed Up</span>
+                                ) : (
+                                  <span className="badge pending"><AlertTriangle size={10} /> Pending Backup</span>
+                                )}
+                                {group.is_digital && !group.is_backed_up && (
+                                  <span className="badge digital"><HardDrive size={10} /> Downloaded</span>
+                                )}
+                              </>
+                            ) : (
+                              group.is_digital ? (
+                                <span className="badge need-physical">Need Physical</span>
+                              ) : (
+                                <span className="badge wishlist-badge">Wishlisted</span>
+                              )
+                            )}
+                          </div>
+
+                          {/* Formats list */}
+                          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', maxWidth: '200px' }}>
+                            {group.movies.map((m) => {
+                              const lbl = getFormatLabel(m);
+                              if (!lbl) return null;
+                              return (
+                                <span key={m.id} className={`badge ${m.is_physical ? 'physical' : 'digital'}`}>
+                                  {lbl}
+                                </span>
+                              );
+                            })}
+                          </div>
+
+                          {/* Actions */}
+                          <div style={{ display: 'flex', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
+                            <button 
+                              className="btn btn-secondary" 
+                              style={{ padding: '0.4rem', minWidth: 'auto' }} 
+                              onClick={() => setSelectedMovie(group)}
+                              title="View Formats & Details"
+                            >
+                              <ChevronRight size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* 3. Text Table View */}
+                {viewMode === 'table' && (
+                  <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: 'var(--bg-secondary)' }}>
+                    <table className="scan-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <th style={{ padding: '1rem', width: '40px' }}>
+                            <input 
+                              type="checkbox"
+                              checked={movies.length > 0 && movies.every(m => selectedMovieIds.includes(m.id))}
+                              onChange={toggleSelectAll}
+                              style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: 'var(--accent)' }}
+                            />
+                          </th>
+                          <th style={{ padding: '1rem' }}>Title</th>
+                          <th style={{ padding: '1rem' }}>Year</th>
+                          <th style={{ padding: '1rem' }}>Rating</th>
+                          <th style={{ padding: '1rem' }}>Genres</th>
+                          <th style={{ padding: '1rem' }}>Status</th>
+                          <th style={{ padding: '1rem' }}>Formats</th>
+                          <th style={{ padding: '1rem', textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {getGroupedMovies(movies).map((group) => {
+                          const isSelected = group.movies.every(m => selectedMovieIds.includes(m.id));
+                          const isPartiallySelected = !isSelected && group.movies.some(m => selectedMovieIds.includes(m.id));
+                          
+                          return (
+                            <tr 
+                              key={group.key} 
+                              style={{ 
+                                borderBottom: '1px solid var(--border-color)', 
+                                backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.05)' : 'transparent',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => setSelectedMovie(group)}
+                            >
+                              <td style={{ padding: '1rem' }} onClick={(e) => e.stopPropagation()}>
+                                <input 
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  ref={el => {
+                                    if (el) el.indeterminate = isPartiallySelected;
+                                  }}
+                                  onChange={() => toggleGroupSelection(group.movies)}
+                                  style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: 'var(--accent)' }}
+                                />
+                              </td>
+                              <td style={{ padding: '1rem', fontWeight: 600 }}>{group.title}</td>
+                              <td style={{ padding: '1rem' }}>{group.release_year || '-'}</td>
+                              <td style={{ padding: '1rem' }}>{group.rating ? `★ ${group.rating.toFixed(1)}` : '-'}</td>
+                              <td style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                {group.genres || '-'}
+                              </td>
+                              <td style={{ padding: '1rem' }}>
+                                <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                                  {group.owned ? (
+                                    <>
+                                      <span className="badge owned-badge">Owned</span>
+                                      {group.is_backed_up ? (
+                                        <span className="badge backed-up">Backed Up</span>
+                                      ) : (
+                                        <span className="badge pending">Pending Backup</span>
+                                      )}
+                                      {group.is_digital && !group.is_backed_up && (
+                                        <span className="badge digital">Downloaded</span>
+                                      )}
+                                    </>
+                                  ) : (
+                                    group.is_digital ? (
+                                      <span className="badge need-physical">Need Physical</span>
+                                    ) : (
+                                      <span className="badge wishlist-badge">Wishlisted</span>
+                                    )
+                                  )}
+                                </div>
+                              </td>
+                              <td style={{ padding: '1rem' }}>
+                                <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                                  {group.movies.map((m) => {
+                                    const lbl = getFormatLabel(m);
+                                    if (!lbl) return null;
+                                    return (
+                                      <span key={m.id} className={`badge ${m.is_physical ? 'physical' : 'digital'}`} style={{ fontSize: '0.65rem' }}>
+                                        {lbl}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+                              <td style={{ padding: '1rem', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                                  <button className="btn btn-secondary" style={{ padding: '0.4rem', minWidth: 'auto' }} onClick={() => setSelectedMovie(group)}>
+                                    <ChevronRight size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -707,8 +1341,22 @@ export default function App() {
                       className="form-control" 
                       style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }}
                       value={batchLocation} 
-                      onChange={(e) => setBatchLocation(e.target.value)} 
+                      onChange={(e) => handleBatchLocationChange(e.target.value)} 
                     />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Default Import State</label>
+                    <select 
+                      className="filter-select"
+                      style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem', width: '180px' }}
+                      value={batchImportState}
+                      onChange={(e) => handleBatchImportStateChange(e.target.value)}
+                    >
+                      <option value="backed_up_wishlist">Wishlist (Backed Up)</option>
+                      <option value="backed_up_owned">Owned & Backed Up</option>
+                      <option value="owned_not_backed_up">Owned & Not Backed Up</option>
+                    </select>
                   </div>
 
                   <div className="form-group" style={{ marginBottom: 0 }}>
@@ -717,7 +1365,7 @@ export default function App() {
                       className="filter-select"
                       style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem', width: '150px' }}
                       value={batchPhysicalFormat}
-                      onChange={(e) => setBatchPhysicalFormat(e.target.value)}
+                      onChange={(e) => handleBatchPhysicalFormatChange(e.target.value)}
                     >
                       <option value="None">Digital Only</option>
                       <option value="Blu-ray">Blu-ray</option>
@@ -741,6 +1389,7 @@ export default function App() {
                       <th>File Details</th>
                       <th>Parsed Information</th>
                       <th>Suggested Metadata Match</th>
+                      <th>Import Option</th>
                       <th style={{ textAlign: 'right' }}>Actions</th>
                     </tr>
                   </thead>
@@ -790,7 +1439,7 @@ export default function App() {
                                   overflowY: 'auto',
                                   padding: '0.25rem',
                                   width: '240px',
-                                  boxShadow: var(--shadow-md)
+                                  boxShadow: 'var(--shadow-md)'
                                 }}>
                                   {correctResults.map(cr => (
                                     <div 
@@ -824,7 +1473,7 @@ export default function App() {
                                   <span className="scan-match-year">Year: {fileItem.suggested_match.release_year || 'Unknown'}</span>
                                 </div>
                                 <button 
-                                  style={{ background: 'none', border: 'none', color: var(--accent), cursor: 'pointer', fontSize: '0.75rem', textDecoration: 'underline', marginLeft: 'auto' }}
+                                  style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '0.75rem', textDecoration: 'underline', marginLeft: 'auto' }}
                                   onClick={() => startCorrection(idx, fileItem.parsed_title)}
                                 >
                                   Fix
@@ -844,9 +1493,35 @@ export default function App() {
                             )
                           )}
                         </td>
+                        <td>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                            <select 
+                              className="filter-select"
+                              style={{ padding: '0.35rem 0.5rem', fontSize: '0.8rem', width: '180px' }}
+                              value={fileItem.import_state || batchImportState}
+                              onChange={(e) => updateFileItem(idx, 'import_state', e.target.value)}
+                            >
+                              <option value="backed_up_wishlist">Wishlist (Backed Up)</option>
+                              <option value="backed_up_owned">Owned & Backed Up</option>
+                              <option value="owned_not_backed_up">Owned & Not Backed Up</option>
+                            </select>
+                            
+                            <select 
+                              className="filter-select"
+                              style={{ padding: '0.35rem 0.5rem', fontSize: '0.8rem', width: '180px' }}
+                              value={fileItem.physical_format || batchPhysicalFormat}
+                              onChange={(e) => updateFileItem(idx, 'physical_format', e.target.value)}
+                            >
+                              <option value="None">Digital Only</option>
+                              <option value="Blu-ray">Blu-ray</option>
+                              <option value="DVD">DVD</option>
+                              <option value="4K UHD">4K Ultra HD</option>
+                            </select>
+                          </div>
+                        </td>
                         <td style={{ textAlign: 'right' }}>
                           {fileItem.already_imported ? (
-                            <span style={{ color: 'var(--success)', fontWeight: 600, fontSize: '0.9rem', display: 'inline-flex', alignCenter: true, gap: '0.25rem' }}>
+                            <span style={{ color: 'var(--success)', fontWeight: 600, fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
                               <CheckCircle2 size={16} /> Imported
                             </span>
                           ) : (
@@ -967,14 +1642,29 @@ export default function App() {
                 </div>
 
                 <div className="badge-group" style={{ marginBottom: '1.5rem' }}>
+                  {/* Tag 1: Ownership */}
                   {selectedMovie.owned ? (
+                    <span className="badge owned-badge">Owned</span>
+                  ) : (
+                    selectedMovie.is_digital ? (
+                      <span className="badge need-physical">Need Physical</span>
+                    ) : (
+                      <span className="badge wishlist-badge">Wishlisted</span>
+                    )
+                  )}
+                  
+                  {/* Tag 2: Backup */}
+                  {selectedMovie.owned && (
                     selectedMovie.is_backed_up ? (
-                      <span className="badge backed-up"><CheckCircle2 size={12} /> Backed Up ({selectedMovie.backup_location})</span>
+                      <span className="badge backed-up"><CheckCircle2 size={12} /> Backed Up</span>
                     ) : (
                       <span className="badge pending"><AlertTriangle size={12} /> Pending Backup</span>
                     )
-                  ) : (
-                    <span className="badge wishlist-badge">On Wishlist</span>
+                  )}
+
+                  {/* Tag 3: Downloaded */}
+                  {selectedMovie.is_digital && (
+                    <span className="badge digital"><HardDrive size={12} /> Downloaded</span>
                   )}
                 </div>
 
@@ -995,39 +1685,88 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="detail-section-title">Media Details</div>
-                <div className="detail-fields-grid">
-                  <div className="detail-field">
-                    <span className="detail-label">Physical Media Owned</span>
-                    <span className="detail-value">{selectedMovie.is_physical ? `Yes (${selectedMovie.physical_format})` : 'No'}</span>
-                  </div>
-
-                  <div className="detail-field">
-                    <span className="detail-label">Digital File Backup</span>
-                    <span className="detail-value">{selectedMovie.is_digital ? `Yes (${selectedMovie.digital_format || 'Format unknown'})` : 'No'}</span>
-                  </div>
-
-                  {selectedMovie.is_digital && (
-                    <>
-                      <div className="detail-field">
-                        <span className="detail-label">Backup Location</span>
-                        <span className="detail-value">{selectedMovie.backup_location || 'Not Specified'}</span>
+                <div className="detail-section-title">Formats & Backups ({selectedMovie.movies ? selectedMovie.movies.length : 1})</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem' }}>
+                  {selectedMovie.movies ? selectedMovie.movies.map((item, idx) => (
+                    <div 
+                      key={item.id} 
+                      style={{ 
+                        background: 'var(--bg-primary)', 
+                        border: '1px solid var(--border-color)', 
+                        borderRadius: 'var(--radius-sm)', 
+                        padding: '1rem',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: '1rem'
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 700 }}>Option #{idx + 1}</span>
+                          {item.is_physical && <span className="badge physical">{item.physical_format}</span>}
+                          {item.is_digital && <span className="badge digital">{item.digital_format || 'Digital'}</span>}
+                          {item.owned ? <span className="badge owned-badge">Owned</span> : <span className="badge wishlist-badge">Wishlist</span>}
+                          {item.is_backed_up ? <span className="badge backed-up">Backed Up</span> : <span className="badge pending">Pending</span>}
+                        </div>
+                        {item.is_digital && (
+                          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                            <div><strong>Path:</strong> <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{item.backup_path || 'No Path Info'}</span></div>
+                            <div><strong>Location:</strong> {item.backup_location || 'Not Specified'}</div>
+                          </div>
+                        )}
                       </div>
-                      <div className="detail-field">
-                        <span className="detail-label">Backup Source Path</span>
-                        <span className="detail-value" style={{ fontFamily: 'monospace', fontSize: '0.85rem', wordBreak: 'break-all' }}>{selectedMovie.backup_path || 'No Path Info'}</span>
+
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button 
+                          className="btn btn-secondary" 
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }} 
+                          onClick={() => openEditModal(item)}
+                        >
+                          <Edit3 size={14} /> Edit
+                        </button>
+                        <button 
+                          className="btn btn-secondary" 
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', color: 'var(--danger)' }} 
+                          onClick={async () => {
+                            await handleDeleteMovie(item.id);
+                            setSelectedMovie(null);
+                          }}
+                        >
+                          <Trash2 size={14} /> Remove
+                        </button>
                       </div>
-                    </>
+                    </div>
+                  )) : (
+                    <div 
+                      style={{ 
+                        background: 'var(--bg-primary)', 
+                        border: '1px solid var(--border-color)', 
+                        borderRadius: 'var(--radius-sm)', 
+                        padding: '1rem',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          {selectedMovie.is_physical && <span className="badge physical">{selectedMovie.physical_format}</span>}
+                          {selectedMovie.is_digital && <span className="badge digital">{selectedMovie.digital_format || 'Digital'}</span>}
+                        </div>
+                        {selectedMovie.is_digital && (
+                          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                            <div><strong>Path:</strong> <span style={{ fontFamily: 'monospace' }}>{selectedMovie.backup_path || 'No Path Info'}</span></div>
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-secondary" onClick={() => openEditModal(selectedMovie)}><Edit3 size={14} /> Edit</button>
+                        <button className="btn btn-secondary" style={{ color: 'var(--danger)' }} onClick={() => { handleDeleteMovie(selectedMovie.id); setSelectedMovie(null); }}><Trash2 size={14} /> Remove</button>
+                      </div>
+                    </div>
                   )}
-                </div>
-
-                <div className="detail-actions">
-                  <button className="btn btn-secondary" onClick={() => openEditModal(selectedMovie)}>
-                    <Edit3 size={16} /> Edit Movie
-                  </button>
-                  <button className="btn btn-secondary" style={{ color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={() => handleDeleteMovie(selectedMovie.id)}>
-                    <Trash2 size={16} /> Remove
-                  </button>
                 </div>
               </div>
             </div>
@@ -1205,15 +1944,15 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Ownership status */}
+                  {/* Catalog Status */}
                   <div className="form-row" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1.25rem' }}>
                     <div className="form-group">
                       <label>Catalog Status</label>
-                      <div style={{ display: 'flex', gap: '1.5rem', marginTop: '0.5rem' }}>
+                      <div style={{ display: 'flex', gap: '1.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
                         <label className="form-checkbox-group">
                           <input 
                             type="radio" 
-                            name="owned" 
+                            name="catalog_status" 
                             className="form-checkbox"
                             checked={manualMovieForm.owned === true}
                             onChange={() => setManualMovieForm({ ...manualMovieForm, owned: true })}
@@ -1223,61 +1962,89 @@ export default function App() {
                         <label className="form-checkbox-group">
                           <input 
                             type="radio" 
-                            name="owned" 
+                            name="catalog_status" 
                             className="form-checkbox"
-                            checked={manualMovieForm.owned === false}
-                            onChange={() => setManualMovieForm({ ...manualMovieForm, owned: false, is_backed_up: false })}
+                            checked={manualMovieForm.owned === false && manualMovieForm.is_digital === true}
+                            onChange={() => setManualMovieForm({ 
+                              ...manualMovieForm, 
+                              owned: false, 
+                              is_physical: false, 
+                              is_digital: true, 
+                              is_backed_up: false 
+                            })}
                           />
-                          Wishlist
+                          Downloaded (Need Physical)
+                        </label>
+                        <label className="form-checkbox-group">
+                          <input 
+                            type="radio" 
+                            name="catalog_status" 
+                            className="form-checkbox"
+                            checked={manualMovieForm.owned === false && manualMovieForm.is_digital === false}
+                            onChange={() => setManualMovieForm({ 
+                              ...manualMovieForm, 
+                              owned: false, 
+                              is_physical: false, 
+                              is_digital: false, 
+                              is_backed_up: false 
+                            })}
+                          />
+                          Wishlisted
                         </label>
                       </div>
                     </div>
                   </div>
 
-                  {/* Format details (only if owned) */}
-                  {manualMovieForm.owned && (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginTop: '0.5rem' }}>
-                      <div style={{ border: '1px solid var(--border-color)', padding: '1rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-primary)' }}>
-                        <label className="form-checkbox-group" style={{ fontWeight: 600, marginBottom: '0.75rem' }}>
-                          <input 
-                            type="checkbox" 
-                            className="form-checkbox"
-                            checked={manualMovieForm.is_physical}
-                            onChange={(e) => setManualMovieForm({ ...manualMovieForm, is_physical: e.target.checked })}
-                          />
-                          Physical Media Details
-                        </label>
-                        
-                        {manualMovieForm.is_physical && (
-                          <div className="form-group" style={{ marginBottom: 0, marginTop: '0.5rem' }}>
-                            <label>Physical Source Format</label>
-                            <select 
-                              className="filter-select"
-                              style={{ width: '100%', marginTop: '0.25rem' }}
-                              value={manualMovieForm.physical_format}
-                              onChange={(e) => setManualMovieForm({ ...manualMovieForm, physical_format: e.target.value })}
-                            >
-                              <option value="Blu-ray">Blu-ray</option>
-                              <option value="DVD">DVD</option>
-                              <option value="4K UHD">4K Ultra HD</option>
-                              <option value="VHS">VHS</option>
-                            </select>
-                          </div>
-                        )}
-                      </div>
+                  {/* Format details (Owned or Downloaded) */}
+                  {(manualMovieForm.owned || manualMovieForm.is_digital) && (
+                    <div style={{ display: 'grid', gridTemplateColumns: manualMovieForm.owned ? '1fr 1fr' : '1fr', gap: '1.5rem', marginTop: '0.5rem' }}>
+                      {manualMovieForm.owned && (
+                        <div style={{ border: '1px solid var(--border-color)', padding: '1rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-primary)' }}>
+                          <label className="form-checkbox-group" style={{ fontWeight: 600, marginBottom: '0.75rem' }}>
+                            <input 
+                              type="checkbox" 
+                              className="form-checkbox"
+                              checked={manualMovieForm.is_physical}
+                              onChange={(e) => setManualMovieForm({ ...manualMovieForm, is_physical: e.target.checked })}
+                            />
+                            Physical Media Details
+                          </label>
+                          
+                          {manualMovieForm.is_physical && (
+                            <div className="form-group" style={{ marginBottom: 0, marginTop: '0.5rem' }}>
+                              <label>Physical Source Format</label>
+                              <select 
+                                className="filter-select"
+                                style={{ width: '100%', marginTop: '0.25rem' }}
+                                value={manualMovieForm.physical_format}
+                                onChange={(e) => setManualMovieForm({ ...manualMovieForm, physical_format: e.target.value })}
+                              >
+                                <option value="Blu-ray">Blu-ray</option>
+                                <option value="DVD">DVD</option>
+                                <option value="4K UHD">4K Ultra HD</option>
+                                <option value="VHS">VHS</option>
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
-                      <div style={{ border: '1px solid var(--border-color)', padding: '1rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-primary)' }}>
-                        <label className="form-checkbox-group" style={{ fontWeight: 600, marginBottom: '0.75rem' }}>
-                          <input 
-                            type="checkbox" 
-                            className="form-checkbox"
-                            checked={manualMovieForm.is_digital}
-                            onChange={(e) => setManualMovieForm({ ...manualMovieForm, is_digital: e.target.checked })}
-                          />
-                          Digital Archival Details
-                        </label>
-                        
-                        {manualMovieForm.is_digital && (
+                      {manualMovieForm.is_digital && (
+                        <div style={{ border: '1px solid var(--border-color)', padding: '1rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-primary)' }}>
+                          <label className="form-checkbox-group" style={{ fontWeight: 600, marginBottom: '0.75rem' }}>
+                            {manualMovieForm.owned ? (
+                              <input 
+                                type="checkbox" 
+                                className="form-checkbox"
+                                checked={manualMovieForm.is_digital}
+                                onChange={(e) => setManualMovieForm({ ...manualMovieForm, is_digital: e.target.checked })}
+                              />
+                            ) : (
+                              <span style={{ marginRight: '0.5rem', color: 'var(--accent)' }}>●</span>
+                            )}
+                            Digital Archival Details
+                          </label>
+                          
                           <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                             <div className="form-row" style={{ margin: 0, gap: '0.75rem' }}>
                               <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
@@ -1286,7 +2053,7 @@ export default function App() {
                                   type="text" 
                                   placeholder="E.g., MKV, MP4"
                                   className="form-control" 
-                                  value={manualMovieForm.digital_format}
+                                  value={manualMovieForm.digital_format || ''}
                                   onChange={(e) => setManualMovieForm({ ...manualMovieForm, digital_format: e.target.value })}
                                 />
                               </div>
@@ -1296,23 +2063,25 @@ export default function App() {
                                   type="text" 
                                   placeholder="E.g., NAS-1, ExtA"
                                   className="form-control" 
-                                  value={manualMovieForm.backup_location}
+                                  value={manualMovieForm.backup_location || ''}
                                   onChange={(e) => setManualMovieForm({ ...manualMovieForm, backup_location: e.target.value })}
                                 />
                               </div>
                             </div>
 
-                            <div className="form-group" style={{ marginBottom: 0 }}>
-                              <label className="form-checkbox-group">
-                                <input 
-                                  type="checkbox" 
-                                  className="form-checkbox"
-                                  checked={manualMovieForm.is_backed_up}
-                                  onChange={(e) => setManualMovieForm({ ...manualMovieForm, is_backed_up: e.target.checked })}
-                                />
-                                Archive Completed (Backed Up)
-                              </label>
-                            </div>
+                            {manualMovieForm.owned && (
+                              <div className="form-group" style={{ marginBottom: 0 }}>
+                                <label className="form-checkbox-group">
+                                  <input 
+                                    type="checkbox" 
+                                    className="form-checkbox"
+                                    checked={manualMovieForm.is_backed_up}
+                                    onChange={(e) => setManualMovieForm({ ...manualMovieForm, is_backed_up: e.target.checked })}
+                                  />
+                                  Archive Completed (Backed Up)
+                                </label>
+                              </div>
+                            )}
 
                             <div className="form-group" style={{ marginBottom: 0 }}>
                               <label>Mounted Source File Path</label>
@@ -1320,13 +2089,13 @@ export default function App() {
                                 type="text" 
                                 placeholder="E.g. Gladiator (2000)/Gladiator.mkv"
                                 className="form-control" 
-                                value={manualMovieForm.backup_path}
+                                value={manualMovieForm.backup_path || ''}
                                 onChange={(e) => setManualMovieForm({ ...manualMovieForm, backup_path: e.target.value })}
                               />
                             </div>
                           </div>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   )}
 

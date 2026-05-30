@@ -32,8 +32,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
-      - /home/bbrodge/MyMovieDB/movies:/movies
+      - ./backend:/app:z
+      - /plex/Plex-Movies:/movies:z
     depends_on:
       db:
         condition: service_healthy

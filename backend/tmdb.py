@@ -23,6 +23,15 @@ def get_tmdb_api_key(db: Session = None) -> str:
             
     return ""
 
+def _get_request_config(api_key: str):
+    headers = {}
+    params = {}
+    if api_key.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {api_key}"
+    else:
+        params["api_key"] = api_key
+    return headers, params
+
 def search_movies(query: str, year: int = None, db: Session = None):
     api_key = get_tmdb_api_key(db)
     if not api_key:
@@ -30,18 +39,18 @@ def search_movies(query: str, year: int = None, db: Session = None):
         return _get_mock_search_results(query, year)
     
     url = "https://api.themoviedb.org/3/search/movie"
-    params = {
-        "api_key": api_key,
+    headers, params = _get_request_config(api_key)
+    params.update({
         "query": query,
         "language": "en-US",
         "page": 1
-    }
+    })
     if year:
         params["year"] = year
         params["primary_release_year"] = year
 
     try:
-        response = requests.get(url, params=params, timeout=8)
+        response = requests.get(url, params=params, headers=headers, timeout=8)
         if response.status_code == 401:
             logger.error("TMDB API Key is unauthorized (401).")
             return []
@@ -70,13 +79,13 @@ def get_movie_details(tmdb_id: str, db: Session = None):
         return _get_mock_details(tmdb_id)
         
     url = f"https://api.themoviedb.org/3/movie/{tmdb_id}"
-    params = {
-        "api_key": api_key,
+    headers, params = _get_request_config(api_key)
+    params.update({
         "language": "en-US"
-    }
+    })
     
     try:
-        response = requests.get(url, params=params, timeout=8)
+        response = requests.get(url, params=params, headers=headers, timeout=8)
         response.raise_for_status()
         item = response.json()
         

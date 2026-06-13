@@ -218,6 +218,10 @@ def scan_movies_directory(db: Session = Depends(get_db)):
     results = scanner.scan_directory(movies_dir, db)
     return {"results": results}
 
+@app.get("/api/scan/progress")
+def get_scan_progress():
+    return scanner.scan_progress
+
 @app.post("/api/scan/import")
 def import_scanned_movie(req: ImportRequest, db: Session = Depends(get_db)):
     # 1. Fetch full details from TMDB if tmdb_id is available

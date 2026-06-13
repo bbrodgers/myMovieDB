@@ -63,7 +63,8 @@ export default function App() {
   const [scanMessage, setScanMessage] = useState('');
   const [batchLocation, setBatchLocation] = useState('NAS-1');
   const [batchPhysicalFormat, setBatchPhysicalFormat] = useState('None');
-  const [batchImportState, setBatchImportState] = useState('backed_up_owned');
+  const [batchImportState, setBatchImportState] = useState('downloaded');
+  const [selectedScannedPaths, setSelectedScannedPaths] = useState([]);
 
   // Library View & Selection State
   const [viewMode, setViewMode] = useState('grid'); // 'grid', 'compact', 'table'
@@ -166,6 +167,26 @@ export default function App() {
         return Array.from(union);
       }
     });
+  };
+
+  const toggleScannedSelection = (filePath) => {
+    setSelectedScannedPaths(prev => {
+      if (prev.includes(filePath)) {
+        return prev.filter(p => p !== filePath);
+      } else {
+        return [...prev, filePath];
+      }
+    });
+  };
+
+  const toggleSelectAllScanned = () => {
+    const unimported = scannedFiles.filter(item => !item.already_imported && item.suggested_match);
+    const allSelected = unimported.length > 0 && unimported.every(item => selectedScannedPaths.includes(item.file_path));
+    if (allSelected) {
+      setSelectedScannedPaths([]);
+    } else {
+      setSelectedScannedPaths(unimported.map(item => item.file_path));
+    }
   };
 
   const toggleSelectAll = () => {
@@ -470,8 +491,25 @@ export default function App() {
   const handleScanDirectory = async () => {
     setIsScanning(true);
     setScanMessage('Scanning movies directory...');
+    
+    // Start progress polling
+    const pollInterval = setInterval(async () => {
+      try {
+        const progressRes = await fetch(`${API_BASE}/api/scan/progress`);
+        if (progressRes.ok) {
+          const progressData = await progressRes.json();
+          if (progressData.status) {
+            setScanMessage(progressData.status);
+          }
+        }
+      } catch (err) {
+        console.error('Error polling scan progress:', err);
+      }
+    }, 1000);
+
     try {
       const res = await fetch(`${API_BASE}/api/scan`);
+      clearInterval(pollInterval);
       if (res.ok) {
         const data = await res.json();
         if (data.error) {
@@ -484,12 +522,20 @@ export default function App() {
             backup_location: batchLocation
           }));
           setScannedFiles(filesWithDefaults);
+          
+          // Select all matched unimported files by default
+          const unimportedPaths = filesWithDefaults
+            .filter(item => !item.already_imported && item.suggested_match)
+            .map(item => item.file_path);
+          setSelectedScannedPaths(unimportedPaths);
+          
           setScanMessage(`Scanning completed. Found ${data.results.length} movie files.`);
         }
       } else {
         setScanMessage('Scanning failed.');
       }
     } catch (err) {
+      clearInterval(pollInterval);
       setScanMessage('Error scanning directory.');
       console.error(err);
     } finally {
@@ -514,9 +560,9 @@ export default function App() {
     let isBackedUp = true;
     let isDigital = true;
 
-    if (itemImportState === 'backed_up_wishlist') {
+    if (itemImportState === 'downloaded') {
       owned = false;
-      isBackedUp = true;
+      isBackedUp = false;
       isDigital = true;
     } else if (itemImportState === 'backed_up_owned') {
       owned = true;
@@ -557,6 +603,7 @@ export default function App() {
           }
           return item;
         }));
+        setSelectedScannedPaths(prev => prev.filter(p => p !== scannedItem.file_path));
         fetchStats();
       } else {
         const errData = await res.json();
@@ -568,21 +615,27 @@ export default function App() {
   };
 
   const handleBatchImport = async () => {
-    const unimported = scannedFiles.filter(item => !item.already_imported && item.suggested_match);
-    if (unimported.length === 0) {
-      alert('No unimported items with valid matches to batch import.');
+    const selectedItems = scannedFiles.filter(item => 
+      !item.already_imported && 
+      item.suggested_match && 
+      selectedScannedPaths.includes(item.file_path)
+    );
+    
+    if (selectedItems.length === 0) {
+      alert('No selected items with valid matches to batch import.');
       return;
     }
 
-    if (!window.confirm(`Are you sure you want to batch import ${unimported.length} movies?`)) return;
+    if (!window.confirm(`Are you sure you want to batch import ${selectedItems.length} selected movies?`)) return;
 
-    setScanMessage(`Batch importing ${unimported.length} files...`);
+    setScanMessage(`Batch importing ${selectedItems.length} files...`);
     
-    for (const item of unimported) {
+    for (const item of selectedItems) {
       await handleImportScanned(item);
     }
 
     setScanMessage('Batch import completed.');
+    setSelectedScannedPaths([]);
     // Re-scan to clean list status
     handleScanDirectory();
   };
@@ -617,6 +670,13 @@ export default function App() {
   const selectCorrection = (index, matchItem) => {
     setScannedFiles(prev => prev.map((item, idx) => {
       if (idx === index) {
+        // Check it automatically for import
+        setSelectedScannedPaths(s => {
+          if (!s.includes(item.file_path)) {
+            return [...s, item.file_path];
+          }
+          return s;
+        });
         return { ...item, suggested_match: matchItem };
       }
       return item;
@@ -1353,7 +1413,7 @@ export default function App() {
                       value={batchImportState}
                       onChange={(e) => handleBatchImportStateChange(e.target.value)}
                     >
-                      <option value="backed_up_wishlist">Wishlist (Backed Up)</option>
+                      <option value="downloaded">Downloaded (Need Physical)</option>
                       <option value="backed_up_owned">Owned & Backed Up</option>
                       <option value="owned_not_backed_up">Owned & Not Backed Up</option>
                     </select>
@@ -1378,14 +1438,23 @@ export default function App() {
                     className="btn btn-primary" 
                     style={{ padding: '0.6rem 1rem', fontSize: '0.85rem' }}
                     onClick={handleBatchImport}
+                    disabled={selectedScannedPaths.length === 0}
                   >
-                    Batch Import All Matched
+                    Batch Import Selected ({selectedScannedPaths.length})
                   </button>
                 </div>
 
                 <table className="scan-table">
                   <thead>
                     <tr>
+                      <th style={{ width: '40px' }}>
+                        <input 
+                          type="checkbox"
+                          checked={scannedFiles.filter(item => !item.already_imported && item.suggested_match).length > 0 && scannedFiles.filter(item => !item.already_imported && item.suggested_match).every(item => selectedScannedPaths.includes(item.file_path))}
+                          onChange={toggleSelectAllScanned}
+                          style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: 'var(--accent)' }}
+                        />
+                      </th>
                       <th>File Details</th>
                       <th>Parsed Information</th>
                       <th>Suggested Metadata Match</th>
@@ -1396,6 +1465,16 @@ export default function App() {
                   <tbody>
                     {scannedFiles.map((fileItem, idx) => (
                       <tr key={idx} style={{ opacity: fileItem.already_imported ? 0.5 : 1 }}>
+                        <td>
+                          {!fileItem.already_imported && fileItem.suggested_match ? (
+                            <input 
+                              type="checkbox"
+                              checked={selectedScannedPaths.includes(fileItem.file_path)}
+                              onChange={() => toggleScannedSelection(fileItem.file_path)}
+                              style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: 'var(--accent)' }}
+                            />
+                          ) : null}
+                        </td>
                         <td>
                           <div className="scan-file-info">
                             <span className="scan-file-name">{fileItem.filename}</span>
@@ -1501,7 +1580,7 @@ export default function App() {
                               value={fileItem.import_state || batchImportState}
                               onChange={(e) => updateFileItem(idx, 'import_state', e.target.value)}
                             >
-                              <option value="backed_up_wishlist">Wishlist (Backed Up)</option>
+                              <option value="downloaded">Downloaded (Need Physical)</option>
                               <option value="backed_up_owned">Owned & Backed Up</option>
                               <option value="owned_not_backed_up">Owned & Not Backed Up</option>
                             </select>

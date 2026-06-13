@@ -1,0 +1,9 @@
+site_name: MyMovieDB Documentation
+site_description: Documentation for the MyMovieDB project
+theme: darkly
+
+nav:
+  - Home: index.md
+  - Setup Guide: setup.md
+  - Backend: backend.md
+  - Frontend: frontend.md

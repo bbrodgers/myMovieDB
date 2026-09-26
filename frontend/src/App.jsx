@@ -73,7 +73,7 @@ export default function App() {
   // Fetch movies and stats
   const fetchMovies = async () => {
     try {
-      const url = new URL(`${API_BASE}/api/movies`);
+      const url = new URL(`${API_BASE}/api/movies`, window.location.origin);
       if (searchQuery) url.searchParams.append('search', searchQuery);
       if (ownedFilter !== 'all') url.searchParams.append('owned', ownedFilter);
       if (formatFilter !== 'all') url.searchParams.append('format', formatFilter);

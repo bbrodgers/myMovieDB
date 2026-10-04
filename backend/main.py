@@ -165,7 +165,7 @@ def update_movie(movie_id: int, movie_in: MovieUpdate, db: Session = Depends(get
     if not db_movie:
         raise HTTPException(status_code=404, detail="Movie not found")
         
-    for field, value in movie_in.dict(exclude_unset=True).items():
+    for field, value in movie_in.model_dump().items():
         setattr(db_movie, field, value)
         
     db.commit()

@@ -52,6 +52,7 @@ export default function App() {
   const [selectedMovie, setSelectedMovie] = useState(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [editingMovieId, setEditingMovieId] = useState(null);
   
   // Settings State
   const [tmdbApiKey, setTmdbApiKey] = useState('');
@@ -416,7 +417,7 @@ export default function App() {
 
       let res;
       if (isEditing) {
-        res = await fetch(`${API_BASE}/api/movies/${selectedMovie.id}`, {
+        res = await fetch(`${API_BASE}/api/movies/${editingMovieId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -431,7 +432,7 @@ export default function App() {
 
       if (res.ok) {
         setIsAddModalOpen(false);
-        setIsEditing(false);
+        setIsEditing(false); setEditingMovieId(null);
         setSelectedMovie(null);
         fetchMovies();
         fetchStats();
@@ -483,6 +484,7 @@ export default function App() {
       backup_path: movie.backup_path || ''
     });
     setIsEditing(true);
+    setEditingMovieId(movie.id);
     setAddModalTab('form');
     setIsAddModalOpen(true);
   };
@@ -754,7 +756,7 @@ export default function App() {
                 <h1 style={{ fontSize: '2.5rem', fontWeight: 800, marginBottom: '0.25rem' }}>Personal Library</h1>
                 <p className="text-muted">Track backups, wishlists, and physical media formats.</p>
               </div>
-              <button className="btn btn-primary" onClick={() => { setIsEditing(false); setIsAddModalOpen(true); }}>
+              <button className="btn btn-primary" onClick={() => { setIsEditing(false); setEditingMovieId(null); setIsAddModalOpen(true); }}>
                 <Plus size={18} />
                 Add Movie
               </button>
@@ -978,7 +980,7 @@ export default function App() {
                 <HelpCircle size={48} className="text-muted" />
                 <h3>No movies match your filters</h3>
                 <p className="text-muted">Start adding manually or trigger a local file scan directory.</p>
-                <button className="btn btn-secondary" onClick={() => { setIsEditing(false); setIsAddModalOpen(true); }}>
+                <button className="btn btn-secondary" onClick={() => { setIsEditing(false); setEditingMovieId(null); setIsAddModalOpen(true); }}>
                   Add a Movie Now
                 </button>
               </div>

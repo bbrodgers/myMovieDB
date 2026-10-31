@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import inspect, text
 from typing import List, Optional
 import os
 
@@ -11,6 +12,10 @@ import scanner
 
 # Auto-create tables on startup
 Base.metadata.create_all(bind=engine)
+with engine.begin() as connection:
+    columns = [column["name"] for column in inspect(engine).get_columns("movies")]
+    if "owner_id" not in columns:
+        connection.execute(text("ALTER TABLE movies ADD COLUMN owner_id INTEGER"))
 
 app = FastAPI(title="MyMovieDB API", version="1.0.0")
 
@@ -37,6 +42,7 @@ class MovieBase(BaseModel):
     genres: Optional[str] = None
     
     owned: bool = True
+    owner_id: Optional[int] = None
     is_physical: bool = False
     physical_format: Optional[str] = None
     is_digital: bool = False
@@ -84,6 +90,9 @@ class BulkUpdateRequest(BaseModel):
     ids: List[int]
     owned: Optional[bool] = None
     is_backed_up: Optional[bool] = None
+
+class OwnerInput(BaseModel):
+    name: str
 
 # Endpoints
 
@@ -216,7 +225,10 @@ def scan_movies_directory(db: Session = Depends(get_db)):
         return {"error": logger_msg, "results": []}
     
     results = scanner.scan_directory(movies_dir, db)
-    return {"results": results}
+    return {
+        "results": results,
+        "removed_unowned": scanner.scan_progress.get("removed_unowned", 0)
+    }
 
 @app.get("/api/scan/progress")
 def get_scan_progress():
@@ -277,6 +289,33 @@ def import_scanned_movie(req: ImportRequest, db: Session = Depends(get_db)):
     return db_movie
 
 # Settings Endpoints
+
+@app.get("/api/owners")
+def get_owners(db: Session = Depends(get_db)):
+    return db.query(models.Owner).order_by(models.Owner.name).all()
+
+@app.post("/api/owners")
+def create_owner(owner: OwnerInput, db: Session = Depends(get_db)):
+    name = owner.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Owner name is required")
+    if db.query(models.Owner).filter(models.Owner.name.ilike(name)).first():
+        raise HTTPException(status_code=400, detail="Owner already exists")
+    record = models.Owner(name=name)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+@app.delete("/api/owners/{owner_id}")
+def delete_owner(owner_id: int, db: Session = Depends(get_db)):
+    owner = db.query(models.Owner).filter(models.Owner.id == owner_id).first()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Owner not found")
+    db.query(models.Movie).filter(models.Movie.owner_id == owner_id).update({models.Movie.owner_id: None})
+    db.delete(owner)
+    db.commit()
+    return {"message": "Owner deleted"}
 
 @app.get("/api/settings")
 def get_settings(db: Session = Depends(get_db)):

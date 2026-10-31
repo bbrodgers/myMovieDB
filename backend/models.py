@@ -17,6 +17,7 @@ class Movie(Base):
 
     # Ownership & Formats
     owned = Column(Boolean, default=True, index=True)
+    owner_id = Column(Integer, nullable=True, index=True)
     is_physical = Column(Boolean, default=False)
     physical_format = Column(String(50), nullable=True) # 'DVD', 'Blu-ray', '4K UHD', 'VHS', etc.
     is_digital = Column(Boolean, default=False)
@@ -30,6 +31,12 @@ class Movie(Base):
     # Metadata
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+class Owner(Base):
+    __tablename__ = "owners"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, unique=True)
 
 class AppSetting(Base):
     __tablename__ = "app_settings"

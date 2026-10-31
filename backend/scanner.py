@@ -38,12 +38,48 @@ def clean_title(title: str) -> str:
 
 scan_progress = {"status": "Idle", "current": 0, "total": 0}
 
+def remove_missing_unowned_records(directory_path: str, db: Session) -> int:
+    """Reconcile tracked files without ever removing confirmed owned records."""
+    root = os.path.realpath(directory_path)
+    removed = 0
+
+    records = db.query(Movie).filter(
+        Movie.backup_path.isnot(None),
+        Movie.backup_path != ""
+    ).all()
+    for movie in records:
+        stored_path = movie.backup_path
+        candidate = os.path.realpath(
+            stored_path if os.path.isabs(stored_path) else os.path.join(root, stored_path)
+        )
+        try:
+            is_inside_root = os.path.commonpath([root, candidate]) == root
+        except ValueError:
+            is_inside_root = False
+        if not is_inside_root:
+            continue
+
+        file_exists = os.path.isfile(candidate)
+        if not file_exists and not movie.owned:
+            db.delete(movie)
+            removed += 1
+        elif movie.is_backed_up != file_exists:
+            movie.is_backed_up = file_exists
+
+    if removed or records:
+        db.commit()
+    return removed
+
 def scan_directory(directory_path: str, db: Session):
     global scan_progress
     scan_progress = {"status": "Initializing...", "current": 0, "total": 0}
     
     if not os.path.exists(directory_path):
         scan_progress = {"status": "Directory not found", "current": 0, "total": 0}
+        return []
+
+    if not os.path.isdir(directory_path):
+        scan_progress = {"status": "Scan path is not a directory", "current": 0, "total": 0}
         return []
 
     # Pre-scan video files to determine total count
@@ -55,9 +91,18 @@ def scan_directory(directory_path: str, db: Session):
 
     total = len(video_files)
     scan_progress["total"] = total
+
+    # Do this after confirming the scan root exists, including when it contains no video files.
+    removed_unowned = remove_missing_unowned_records(directory_path, db)
+    scan_progress["removed_unowned"] = removed_unowned
     
     if total == 0:
-        scan_progress = {"status": "No movie files found in directory", "current": 0, "total": 0}
+        scan_progress = {
+            "status": "No movie files found in directory",
+            "current": 0,
+            "total": 0,
+            "removed_unowned": removed_unowned
+        }
         return []
 
     results = []
@@ -109,5 +154,10 @@ def scan_directory(directory_path: str, db: Session):
             "suggested_match": suggested_match
         })
         
-    scan_progress = {"status": f"Completed. Scanned {total} files.", "current": total, "total": total}
+    scan_progress = {
+        "status": f"Completed. Scanned {total} files.",
+        "current": total,
+        "total": total,
+        "removed_unowned": removed_unowned
+    }
     return results

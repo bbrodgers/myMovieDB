@@ -57,6 +57,8 @@ export default function App() {
   // Settings State
   const [tmdbApiKey, setTmdbApiKey] = useState('');
   const [settingsConfigured, setSettingsConfigured] = useState(false);
+  const [owners, setOwners] = useState([]);
+  const [newOwnerName, setNewOwnerName] = useState('');
 
   // Scanning State
   const [scannedFiles, setScannedFiles] = useState([]);
@@ -114,6 +116,13 @@ export default function App() {
     }
   };
 
+  const fetchOwners = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/owners`);
+      if (res.ok) setOwners(await res.json());
+    } catch (err) { console.error('Error fetching owners:', err); }
+  };
+
   useEffect(() => {
     fetchMovies();
     fetchStats();
@@ -121,6 +130,7 @@ export default function App() {
 
   useEffect(() => {
     fetchSettingsStatus();
+    fetchOwners();
   }, []);
 
   const handleTabChange = (tab) => {
@@ -352,6 +362,7 @@ export default function App() {
     runtime: '',
     genres: '',
     owned: true,
+    owner_id: '',
     is_physical: false,
     physical_format: 'Blu-ray',
     is_digital: false,
@@ -447,6 +458,7 @@ export default function App() {
           runtime: '',
           genres: '',
           owned: true,
+          owner_id: '',
           is_physical: false,
           physical_format: 'Blu-ray',
           is_digital: false,
@@ -475,6 +487,7 @@ export default function App() {
       runtime: movie.runtime || '',
       genres: movie.genres || '',
       owned: movie.owned,
+      owner_id: movie.owner_id || '',
       is_physical: movie.is_physical,
       physical_format: movie.physical_format || 'Blu-ray',
       is_digital: movie.is_digital,
@@ -531,7 +544,9 @@ export default function App() {
             .map(item => item.file_path);
           setSelectedScannedPaths(unimportedPaths);
           
-          setScanMessage(`Scanning completed. Found ${data.results.length} movie files.`);
+          const removedCount = data.removed_unowned || 0;
+          setScanMessage(`Scanning completed. Found ${data.results.length} movie files.${removedCount ? ` Removed ${removedCount} missing, unowned record${removedCount === 1 ? '' : 's'} from the database.` : ''}`);
+          if (removedCount) { fetchMovies(); fetchStats(); }
         }
       } else {
         setScanMessage('Scanning failed.');
@@ -703,6 +718,22 @@ export default function App() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleAddOwner = async (e) => {
+    e.preventDefault();
+    const res = await fetch(`${API_BASE}/api/owners`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newOwnerName })
+    });
+    if (res.ok) { setNewOwnerName(''); fetchOwners(); }
+    else { const error = await res.json(); alert(error.detail || 'Could not add owner'); }
+  };
+
+  const handleDeleteOwner = async (owner) => {
+    if (!window.confirm(`Remove ${owner.name}? Its movie records will become unassigned.`)) return;
+    const res = await fetch(`${API_BASE}/api/owners/${owner.id}`, { method: 'DELETE' });
+    if (res.ok) { fetchOwners(); fetchMovies(); }
   };
 
   return (
@@ -1083,7 +1114,7 @@ export default function App() {
                                     className={`badge ${m.is_physical ? 'physical' : 'digital'}`}
                                     style={{ fontSize: '0.65rem' }}
                                   >
-                                    {lbl}
+                                    {lbl}{m.owner_id && owners.find(owner => owner.id === m.owner_id) ? ` · ${owners.find(owner => owner.id === m.owner_id).name}` : ''}
                                   </span>
                                 );
                               })}
@@ -1662,6 +1693,20 @@ export default function App() {
               </div>
             </form>
 
+            <section style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)' }}>
+              <h3 style={{ marginBottom: '0.25rem' }}>Owners</h3>
+              <p className="text-muted" style={{ marginTop: 0 }}>Manage people to assign to individual movie copies.</p>
+              <form onSubmit={handleAddOwner} style={{ display: 'flex', gap: '0.75rem' }}>
+                <input className="form-control" value={newOwnerName} onChange={e => setNewOwnerName(e.target.value)} placeholder="Owner name" required />
+                <button type="submit" className="btn btn-primary">Add Owner</button>
+              </form>
+              <ul style={{ listStyle: 'none', padding: 0 }}>
+                {owners.map(owner => <li key={owner.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem 0', borderBottom: '1px solid var(--border-color)' }}>
+                  <span>{owner.name}</span><button type="button" className="btn btn-secondary" onClick={() => handleDeleteOwner(owner)}>Remove</button>
+                </li>)}
+              </ul>
+            </section>
+
             <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)' }}>
               <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Developer Diagnostics</h3>
               <table style={{ width: '100%', fontSize: '0.95rem' }}>
@@ -2077,6 +2122,13 @@ export default function App() {
                   </div>
 
                   {/* Format details (Owned or Downloaded) */}
+                  <div className="form-group" style={{ marginTop: '1rem' }}>
+                    <label>Owner</label>
+                    <select className="filter-select" style={{ width: '100%', marginTop: '0.25rem' }} value={manualMovieForm.owner_id} onChange={e => setManualMovieForm({ ...manualMovieForm, owner_id: e.target.value })}>
+                      <option value="">Unassigned</option>
+                      {owners.map(owner => <option key={owner.id} value={owner.id}>{owner.name}</option>)}
+                    </select>
+                  </div>
                   {(manualMovieForm.owned || manualMovieForm.is_digital) && (
                     <div style={{ display: 'grid', gridTemplateColumns: manualMovieForm.owned ? '1fr 1fr' : '1fr', gap: '1.5rem', marginTop: '0.5rem' }}>
                       {manualMovieForm.owned && (

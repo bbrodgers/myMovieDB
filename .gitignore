@@ -26,3 +26,7 @@ Thumbs.db
 
 # User movie archive files (mounted directory)
 movies/
+
+# Agent data
+.opencode/
+.agents/

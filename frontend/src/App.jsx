@@ -47,6 +47,8 @@ export default function App() {
   const [ownedFilter, setOwnedFilter] = useState('all'); // all, owned, wishlist
   const [formatFilter, setFormatFilter] = useState('all'); // all, physical, digital, both
   const [statusFilter, setStatusFilter] = useState('all'); // all, backed_up, pending_backup
+  const [ownerFilter, setOwnerFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('added');
 
   // Modal States
   const [selectedMovie, setSelectedMovie] = useState(null);
@@ -81,6 +83,8 @@ export default function App() {
       if (ownedFilter !== 'all') url.searchParams.append('owned', ownedFilter);
       if (formatFilter !== 'all') url.searchParams.append('format', formatFilter);
       if (statusFilter !== 'all') url.searchParams.append('status', statusFilter);
+      if (ownerFilter !== 'all') url.searchParams.append('owner', ownerFilter);
+      if (sortBy !== 'added') url.searchParams.append('sort_by', sortBy);
 
       const res = await fetch(url);
       if (res.ok) {
@@ -126,7 +130,7 @@ export default function App() {
   useEffect(() => {
     fetchMovies();
     fetchStats();
-  }, [searchQuery, ownedFilter, formatFilter, statusFilter]);
+  }, [searchQuery, ownedFilter, formatFilter, statusFilter, ownerFilter, sortBy]);
 
   useEffect(() => {
     fetchSettingsStatus();
@@ -324,6 +328,11 @@ export default function App() {
     });
     return Object.values(groups);
   };
+
+  const getGroupOwnerLabel = (group) => [...new Set(group.movies.map(movie => {
+    if (!movie.owner_id) return 'Unassigned';
+    return owners.find(owner => String(owner.id) === String(movie.owner_id))?.name || 'Unknown owner';
+  }))].join(', ');
 
   const getFormatLabel = (m) => {
     if (m.is_physical) {
@@ -835,7 +844,7 @@ export default function App() {
                 <Search size={18} className="search-icon" />
                 <input 
                   type="text" 
-                  placeholder="Search catalogued titles..." 
+                  placeholder="Search titles or owners..." 
                   className="search-input"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -874,6 +883,30 @@ export default function App() {
                   <option value="all">Archive: All status</option>
                   <option value="backed_up">Fully Backed Up</option>
                   <option value="pending_backup">Pending Backup</option>
+                </select>
+
+                <select
+                  className="filter-select"
+                  value={ownerFilter}
+                  onChange={(e) => setOwnerFilter(e.target.value)}
+                  aria-label="Filter by owner"
+                >
+                  <option value="all">Owner: All</option>
+                  <option value="unassigned">Unassigned</option>
+                  {owners.map(owner => (
+                    <option key={owner.id} value={owner.id}>{owner.name}</option>
+                  ))}
+                </select>
+
+                <select
+                  className="filter-select"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  aria-label="Sort library"
+                >
+                  <option value="added">Sort: Recently added</option>
+                  <option value="owner_asc">Owner: A to Z</option>
+                  <option value="owner_desc">Owner: Z to A</option>
                 </select>
 
                 {/* View togglers */}
@@ -1093,6 +1126,9 @@ export default function App() {
                                 <span className="badge wishlist-badge">Wishlisted</span>
                               )
                             )}
+                            <span className="badge" title={`Owner: ${getGroupOwnerLabel(group)}`} style={{ background: 'rgba(15, 23, 42, 0.9)', color: '#fff', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              Owner: {getGroupOwnerLabel(group)}
+                            </span>
                           </div>
 
                           {/* Movie info overlay on hover */}
@@ -1182,6 +1218,7 @@ export default function App() {
                                 <span style={{ color: 'var(--warning)', fontWeight: 600, fontSize: '0.9rem' }}>★ {group.rating.toFixed(1)}</span>
                               )}
                             </div>
+                            <div className="text-muted" style={{ fontSize: '0.85rem', marginTop: '0.2rem' }}>Owner: {getGroupOwnerLabel(group)}</div>
                             <p className="text-muted" style={{ fontSize: '0.9rem', margin: '0.25rem 0 0.5rem 0', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                               {group.description || 'No description available.'}
                             </p>
@@ -1260,6 +1297,7 @@ export default function App() {
                             />
                           </th>
                           <th style={{ padding: '1rem' }}>Title</th>
+                          <th style={{ padding: '1rem' }}>Owner</th>
                           <th style={{ padding: '1rem' }}>Year</th>
                           <th style={{ padding: '1rem' }}>Rating</th>
                           <th style={{ padding: '1rem' }}>Genres</th>
@@ -1295,6 +1333,7 @@ export default function App() {
                                 />
                               </td>
                               <td style={{ padding: '1rem', fontWeight: 600 }}>{group.title}</td>
+                              <td style={{ padding: '1rem' }}>{getGroupOwnerLabel(group)}</td>
                               <td style={{ padding: '1rem' }}>{group.release_year || '-'}</td>
                               <td style={{ padding: '1rem' }}>{group.rating ? `★ ${group.rating.toFixed(1)}` : '-'}</td>
                               <td style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>

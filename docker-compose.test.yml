@@ -16,6 +16,7 @@ services:
 
   backend:
     image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE to the GitLab backend image}
+    container_name: moviedb_backend
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-test_only_change_me}@db:5432/moviedb
       TMDB_API_KEY: ${TMDB_API_KEY:-}

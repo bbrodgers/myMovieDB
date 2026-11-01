@@ -23,6 +23,7 @@ build/
 # OS files
 .DS_Store
 Thumbs.db
+*.swp
 
 # User movie archive files (mounted directory)
 movies/

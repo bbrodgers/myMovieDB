@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, text, or_
 from typing import List, Optional
 import os
 
@@ -102,12 +102,21 @@ def get_movies(
     owned: Optional[str] = "all", # "owned", "wishlist", "all"
     format: Optional[str] = "all", # "physical", "digital", "both", "all"
     status: Optional[str] = "all", # "backed_up", "pending_backup", "all"
+    owner: Optional[str] = "all",
+    sort_by: Optional[str] = "added",
     db: Session = Depends(get_db)
 ):
-    query = db.query(models.Movie)
+    query = db.query(models.Movie).outerjoin(models.Owner, models.Movie.owner_id == models.Owner.id)
     
     if search:
-        query = query.filter(models.Movie.title.ilike(f"%{search}%"))
+        query = query.filter(
+            or_(models.Movie.title.ilike(f"%{search}%"), models.Owner.name.ilike(f"%{search}%"))
+        )
+
+    if owner == "unassigned":
+        query = query.filter(models.Movie.owner_id.is_(None))
+    elif owner and owner != "all":
+        query = query.filter(models.Movie.owner_id == int(owner))
         
     if owned == "owned":
         query = query.filter(models.Movie.owned == True)
@@ -130,8 +139,17 @@ def get_movies(
     elif status == "pending_backup":
         query = query.filter(models.Movie.is_backed_up == False, models.Movie.owned == True)
         
-    # Sort by created_at desc (newest first)
-    query = query.order_by(models.Movie.created_at.desc())
+    if sort_by == "owner_asc":
+        query = query.order_by(
+            models.Owner.name.asc().nullslast(), models.Movie.title.asc()
+        )
+    elif sort_by == "owner_desc":
+        query = query.order_by(
+            models.Owner.name.desc().nullsfirst(), models.Movie.title.asc()
+        )
+    else:
+        # Sort by created_at desc (newest first)
+        query = query.order_by(models.Movie.created_at.desc())
     
     movies = query.all()
     
